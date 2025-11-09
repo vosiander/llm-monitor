@@ -1,4 +1,4 @@
-name: Publish Frontend Docker Image
+name: Publish UI Docker Image
 
 on:
   push:
@@ -38,10 +38,10 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ./frontend
+          context: ./ui
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository }}/frontend:latest
-            ghcr.io/${{ github.repository }}/frontend:${{ env.SHORT_SHA }}
-            ${{ env.TAG != '' && format('ghcr.io/{0}/frontend:{1}', github.repository, env.TAG) || '' }}
+            ghcr.io/${{ github.repository }}/ui:latest
+            ghcr.io/${{ github.repository }}/ui:${{ env.SHORT_SHA }}
+            ${{ env.TAG != '' && format('ghcr.io/{0}/ui:{1}', github.repository, env.TAG) || '' }}

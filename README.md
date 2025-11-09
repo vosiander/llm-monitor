@@ -7,8 +7,8 @@ A monitoring and management system for Large Language Models (LLMs) with a moder
 - 🔍 **Automatic Network Discovery**: Automatically discovers Ollama instances on your network
 - 🚀 Real-time LLM monitoring with live updates
 - 🎯 Plugin system for different LLM providers
-- 🖥️ Modern Vue.js frontend interface
-- 🐍 Fast Python backend with FastAPI
+- 🖥️ Modern Vue.js UI interface
+- 🐍 Fast Python API with FastAPI
 - 🛠️ Kubernetes-ready with Helm charts
 - 🔌 Built-in Ollama integration
 - 🌐 CIDR range scanning for multi-host environments
@@ -19,8 +19,8 @@ A monitoring and management system for Large Language Models (LLMs) with a moder
 
 The project consists of three main components:
 
-- **Frontend**: Vue.js application with a modern UI
-- **Backend**: Python-based FastAPI server with plugin support
+- **UI**: Vue.js application with a modern UI
+- **API**: Python-based FastAPI server with plugin support
 - **Helm Charts**: Kubernetes deployment configuration
 
 ## 🚀 Quick Start
@@ -28,8 +28,8 @@ The project consists of three main components:
 ### Prerequisites
 
 - Docker and Docker Compose
-- Node.js 18+ (for local frontend development)
-- Python 3.8+ (for local backend development)
+- Node.js 18+ (for local UI development)
+- Python 3.8+ (for local API development)
 - An LLM provider (e.g., Ollama) running locally or remotely
 
 ### Local Development
@@ -57,8 +57,8 @@ The project consists of three main components:
    ```
 
 5. **Access the application**:
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000
+   - UI: http://localhost:3000
+   - API: http://localhost:8000
    - API Documentation: http://localhost:8000/docs
 
 ### Production Deployment
@@ -115,7 +115,7 @@ DISCOVERY_PORT=11434
 
 - `ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins
 - `TRUSTED_HOSTS`: Comma-separated list of trusted host headers
-- `VITE_LLMMONITOR_URL`: Backend URL for the frontend
+- `VITE_LLMMONITOR_URL`: API URL for the UI
 
 ### How Network Discovery Works
 

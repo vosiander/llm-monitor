@@ -8,17 +8,17 @@ dotenv: ['.env']
 
 tasks:
   sync:
-    dir: backend
+    dir: api
     cmds:
       - uv sync
 
   run:
-    dir: backend
+    dir: api
     cmds:
       - uv run fastapi dev app.py --host 0.0.0.0
 
   run-ui:
-    dir: frontend
+    dir: ui
     dotenv:
       - .env
     cmds:

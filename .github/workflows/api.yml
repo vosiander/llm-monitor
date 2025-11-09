@@ -1,4 +1,4 @@
-name: Publish Backend Docker Image
+name: Publish API Docker Image
 
 on:
   push:
@@ -38,10 +38,10 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ./backend
+          context: ./api
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository }}/backend:latest
-            ghcr.io/${{ github.repository }}/backend:${{ env.SHORT_SHA }}
-            ${{ env.TAG != '' && format('ghcr.io/{0}/backend:{1}', github.repository, env.TAG) || '' }}
+            ghcr.io/${{ github.repository }}/api:latest
+            ghcr.io/${{ github.repository }}/api:${{ env.SHORT_SHA }}
+            ${{ env.TAG != '' && format('ghcr.io/{0}/api:{1}', github.repository, env.TAG) || '' }}
