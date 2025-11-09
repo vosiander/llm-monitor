@@ -25,6 +25,10 @@ class ChatRequest(BaseModel):
     model: str | None = None
 
 
+class DeleteRequest(BaseModel):
+    model_name: str
+
+
 @router.get("")
 async def get_index():
     """
@@ -220,3 +224,65 @@ async def chat_completion(label: str, request: ChatRequest):
             yield json.dumps({"error": str(e)}).encode() + b"\n"
     
     return StreamingResponse(stream_chat_response(), media_type="text/event-stream")
+
+
+@router.delete("/{label}/delete")
+async def delete_model(label: str, request: DeleteRequest):
+    """
+    Delete a model from a specific Ollama host.
+    
+    Args:
+        label: The host label
+        request: Delete request containing model_name
+    
+    Returns:
+        JSON response with success or error message
+    """
+    logger.info(f"DELETE /llmm/{label}/delete called for model: {request.model_name}")
+    
+    # Get discovery manager and plugin service
+    discovery_manager = get_discovery_manager()
+    plugin_service = discovery_manager.get_plugin_service()
+    
+    # Find the plugin for this label
+    if label not in plugin_service.plugins:
+        logger.error(f"Plugin not found for label: {label}")
+        raise HTTPException(status_code=404, detail=f"Host '{label}' not found")
+    
+    plugin = plugin_service.plugins[label]
+    ollama_url = f"http://{plugin.ip}:{plugin.port}/api/delete"
+    payload = {"model": request.model_name}
+    
+    logger.info(f"Sending DELETE request to Ollama")
+    logger.info(f"  URL: {ollama_url}")
+    logger.info(f"  Payload: {payload}")
+    logger.info(f"  Model to delete: {request.model_name}")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(ollama_url, json=payload)
+            
+            # Log detailed response information
+            logger.info(f"Ollama response status code: {response.status_code}")
+            logger.info(f"Ollama response body: {response.text}")
+            logger.info(f"Ollama response headers: {dict(response.headers)}")
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully deleted model {request.model_name} from {label}")
+                return Response(
+                    content=json.dumps({"status": "success"}),
+                    media_type="application/json"
+                )
+            else:
+                error_msg = response.text
+                logger.error(f"Ollama returned error - Status: {response.status_code}, Body: {error_msg}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Ollama error deleting model '{request.model_name}': {error_msg}"
+                )
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP error during model deletion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error during model deletion: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

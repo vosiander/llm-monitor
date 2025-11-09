@@ -210,7 +210,18 @@
       <div class="modal-card chat-modal">
         <header class="modal-card-head">
           <p class="modal-card-title">Chat with {{ selectedHost }}</p>
-          <button class="delete" aria-label="close" @click="chatModalActive = false"></button>
+          <div class="modal-header-actions">
+            <button
+              class="button is-small is-light"
+              @click="openFullscreenChat"
+              title="Open in fullscreen"
+            >
+              <span class="icon">
+                <v-icon name="fa-expand" />
+              </span>
+            </button>
+            <button class="delete" aria-label="close" @click="chatModalActive = false"></button>
+          </div>
         </header>
         <section class="modal-card-body chat-body">
           <div class="model-selector-container">
@@ -290,16 +301,65 @@
             <p class="has-text-weight-semibold mb-3">Available Models:</p>
             <ul class="model-items">
               <li v-for="model in listModels" :key="model" class="model-item">
-                <span class="icon has-text-link">
-                  <v-icon name="fa-cube" />
-                </span>
-                <span>{{ model }}</span>
+                <div class="model-item-content">
+                  <span class="icon has-text-link">
+                    <v-icon name="fa-cube" />
+                  </span>
+                  <span class="model-name">{{ model }}</span>
+                </div>
+                <button
+                  class="button is-danger is-small is-light"
+                  @click="confirmDeleteModel(model)"
+                  :disabled="deleteInProgress"
+                  title="Delete model"
+                >
+                  <span class="icon">
+                    <v-icon name="fa-trash" />
+                  </span>
+                </button>
               </li>
             </ul>
           </div>
         </section>
         <footer class="modal-card-foot">
           <button class="button" @click="listModalActive = false">Close</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div v-if="deleteConfirmModalActive" class="modal is-active">
+      <div class="modal-background" @click="deleteConfirmModalActive = false"></div>
+      <div class="modal-card">
+        <header class="modal-card-head has-background-danger">
+          <p class="modal-card-title has-text-white">Confirm Delete</p>
+          <button class="delete" aria-label="close" @click="deleteConfirmModalActive = false"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="content">
+            <p class="has-text-weight-semibold">Are you sure you want to delete this model?</p>
+            <div class="notification is-warning is-light">
+              <p class="mb-2"><strong>Model:</strong> <code>{{ modelToDelete }}</code></p>
+              <p class="mb-0"><strong>Host:</strong> {{ selectedHost }}</p>
+            </div>
+            <p class="has-text-danger">
+              <v-icon name="fa-exclamation-triangle" />
+              This action cannot be undone. The model will be permanently removed from the host.
+            </p>
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button
+            class="button is-danger"
+            @click="deleteModel"
+            :class="{ 'is-loading': deleteInProgress }"
+            :disabled="deleteInProgress"
+          >
+            Delete Model
+          </button>
+          <button class="button" @click="deleteConfirmModalActive = false" :disabled="deleteInProgress">
+            Cancel
+          </button>
         </footer>
       </div>
     </div>
@@ -337,6 +397,9 @@ export default {
       listModalActive: false,
       listModels: [],
       listModelsLoading: false,
+      deleteConfirmModalActive: false,
+      modelToDelete: null,
+      deleteInProgress: false,
     };
   },
   mounted() {
@@ -649,6 +712,50 @@ export default {
         this.chatLoading = false;
       }
     },
+    confirmDeleteModel(modelName) {
+      this.modelToDelete = modelName;
+      this.deleteConfirmModalActive = true;
+    },
+    async deleteModel() {
+      if (!this.modelToDelete) return;
+
+      this.deleteInProgress = true;
+
+      try {
+        const response = await this.llmmonitor.axios.delete(
+          `/llmm/${this.selectedHost}/delete`,
+          {
+            data: { model_name: this.modelToDelete }
+          }
+        );
+
+        if (response.data.status === 'success') {
+          // Close confirmation modal
+          this.deleteConfirmModalActive = false;
+          this.modelToDelete = null;
+
+          // Refresh the model list
+          this.listModelsLoading = true;
+          try {
+            const refreshResponse = await this.llmmonitor.axios.get(`/llmm/${this.selectedHost}/models`);
+            this.listModels = refreshResponse.data.models || [];
+          } catch (error) {
+            console.error('Error refreshing models:', error);
+          } finally {
+            this.listModelsLoading = false;
+          }
+        }
+      } catch (error) {
+        console.error('Error deleting model:', error);
+        alert(`Failed to delete model: ${error.response?.data?.detail || error.message}`);
+      } finally {
+        this.deleteInProgress = false;
+      }
+    },
+    openFullscreenChat() {
+      // Navigate to the fullscreen chat route
+      this.$router.push(`/chat/${this.selectedHost}`);
+    },
   },
 };
 </script>
@@ -866,6 +973,12 @@ export default {
   max-height: 80vh;
 }
 
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .chat-body {
   height: 500px;
   padding: 0;
@@ -983,6 +1096,7 @@ export default {
 .model-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
   border-radius: 6px;
@@ -1000,7 +1114,14 @@ export default {
   margin-bottom: 0;
 }
 
-.model-item span:not(.icon) {
+.model-item-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+.model-name {
   font-family: monospace;
   font-size: 0.95rem;
   color: #363636;
