@@ -1,0 +1,34 @@
+version: '3'
+
+vars:
+  CURRENT_DIR: { sh: pwd }
+  NAMESPACE: "llm-monitor"
+
+dotenv: ['.env']
+
+tasks:
+  sync:
+    dir: backend
+    cmds:
+      - uv sync
+
+  run:
+    dir: backend
+    cmds:
+      - uv run fastapi dev app.py --host 0.0.0.0
+
+  run-ui:
+    dir: frontend
+    dotenv:
+      - .env
+    cmds:
+      - npm run dev
+
+  helm-destroy:
+    cmds:
+      - helm uninstall llm-monitor -n {{.NAMESPACE}}
+
+  helm-deploy:
+    cmds:
+      - kubectl create namespace {{.NAMESPACE}} || true
+      - helm upgrade -install llm-monitor {{.CURRENT_DIR}}/helm -n {{.NAMESPACE}} -f {{.CURRENT_DIR}}/values.yaml
