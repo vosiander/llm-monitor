@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, APIRouter, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 import asyncio
 import os
 
@@ -62,10 +61,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add security middleware
-trusted_hosts = os.getenv('TRUSTED_HOSTS', 'localhost,127.0.0.1').split(',')
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
-
 # Initialize discovery manager
 try:
     logger.info("Initializing discovery manager...")
@@ -91,6 +86,7 @@ def read_root():
 
 
 @app.get("/health")
+@app.post("/health")
 def health_check():
     """Health check endpoint for Kubernetes/Docker health probes"""
     try:
