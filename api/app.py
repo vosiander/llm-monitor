@@ -1,4 +1,6 @@
-from fastapi import FastAPI, APIRouter
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, APIRouter, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 import asyncio
@@ -13,8 +15,42 @@ from llm_monitor.env_config import load_discovery_config
 from llm_monitor.endpoints import router as llmm
 from loguru import logger
 
-# Initialize FastAPI app
-app = FastAPI(title="LLM Monitor", description="Network discovery and monitoring for Ollama hosts")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan event handler for startup and shutdown.
+    Manages the discovery loop lifecycle.
+    """
+    # Startup
+    logger.info("Starting application...")
+    try:
+        discovery_manager = get_discovery_manager()
+        # Start discovery loop as background task
+        asyncio.create_task(discovery_manager.start_discovery_loop())
+        logger.info("Discovery loop started")
+    except Exception as e:
+        logger.error(f"Failed to start discovery loop: {e}")
+        raise
+    
+    yield  # Application is running
+    
+    # Shutdown
+    logger.info("Shutting down application...")
+    try:
+        discovery_manager = get_discovery_manager()
+        await discovery_manager.stop()
+        logger.info("Discovery manager stopped")
+    except Exception as e:
+        logger.error(f"Error stopping discovery manager: {e}")
+
+
+# Initialize FastAPI app with lifespan handler
+app = FastAPI(
+    title="LLM Monitor",
+    description="Network discovery and monitoring for Ollama hosts",
+    lifespan=lifespan
+)
 
 # Add CORS middleware
 allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',')
@@ -41,34 +77,6 @@ except Exception as e:
     raise
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Start the discovery loop when the application starts"""
-    logger.info("Starting application...")
-    
-    try:
-        discovery_manager = get_discovery_manager()
-        # Start discovery loop as background task
-        asyncio.create_task(discovery_manager.start_discovery_loop())
-        logger.info("Discovery loop started")
-    except Exception as e:
-        logger.error(f"Failed to start discovery loop: {e}")
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Stop the discovery loop when the application shuts down"""
-    logger.info("Shutting down application...")
-    
-    try:
-        discovery_manager = get_discovery_manager()
-        await discovery_manager.stop()
-        logger.info("Discovery manager stopped")
-    except Exception as e:
-        logger.error(f"Error stopping discovery manager: {e}")
-
-
 # Include routers
 router = APIRouter()
 app.include_router(router)
@@ -84,17 +92,26 @@ def read_root():
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint for Kubernetes/Docker health probes"""
     try:
         discovery_manager = get_discovery_manager()
         stats = discovery_manager.get_stats()
-        return {
-            "status": "healthy",
-            "discovery": stats
-        }
+        
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "status": "healthy",
+                "service": "llm-monitor",
+                "discovery": stats
+            }
+        )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "unhealthy",
+                "service": "llm-monitor",
+                "error": str(e)
+            }
+        )
