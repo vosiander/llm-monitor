@@ -4,11 +4,8 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import os
-
-# Setup logging first, before any other imports that might log
 from llm_monitor.logging_config import setup_logging
 setup_logging()
-
 from llm_monitor import init_discovery_manager, get_discovery_manager
 from llm_monitor.env_config import load_discovery_config
 from llm_monitor.endpoints import router as llmm
