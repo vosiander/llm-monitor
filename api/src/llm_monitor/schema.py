@@ -50,3 +50,16 @@ class DiscoveryConfig(BaseModel):
     max_parallel: int = Field(default=10, description="Maximum parallel connections")
     timeout_seconds: float = Field(default=0.5, description="Connection timeout in seconds")
     port: int = Field(default=11434, description="Port to scan for Ollama")
+
+
+class LiteLLMConfig(BaseModel):
+    """Configuration for LiteLLM integration"""
+    url: str = Field(description="LiteLLM API base URL")
+    master_key: str = Field(description="LiteLLM master API key")
+
+
+class BulkCreateRequest(BaseModel):
+    """Request to create models in LiteLLM for multiple hosts"""
+    model_name: str = Field(description="Model name to create in LiteLLM (e.g., 'blablub-gemma3')")
+    ollama_model: str = Field(description="Ollama model to use (e.g., 'gemma3' which will be formatted as 'ollama_chat/gemma3')")
+    host_labels: list[str] = Field(description="List of host labels to create models for")

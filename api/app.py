@@ -7,16 +7,56 @@ import os
 from llm_monitor.logging_config import setup_logging
 setup_logging()
 from llm_monitor import init_discovery_manager, get_discovery_manager
-from llm_monitor.env_config import load_discovery_config
+from llm_monitor.env_config import load_discovery_config, load_endpoints_refresh_interval
 from llm_monitor.endpoints import router as llmm
+from llm_monitor.endpoints_cache import get_endpoints_cache
 from loguru import logger
+
+
+async def start_endpoints_refresh_loop():
+    """
+    Background task that periodically refreshes the endpoints cache.
+    
+    This reduces load on Ollama hosts when multiple clients are polling
+    the /llmm endpoint by serving cached data instead of querying hosts
+    on every request.
+    """
+    refresh_interval = load_endpoints_refresh_interval()
+    endpoints_cache = get_endpoints_cache()
+    
+    logger.info(f"Starting endpoints refresh loop (interval: {refresh_interval}s)")
+    
+    while True:
+        try:
+            # Get discovery manager and fetch endpoints
+            discovery_manager = get_discovery_manager()
+            plugin_service = discovery_manager.get_plugin_service()
+            
+            # Fetch fresh endpoint data
+            endpoints = plugin_service.llm_endpoints()
+            
+            # Convert to JSON-serializable format
+            json_endpoints = {}
+            for label, endpoint in endpoints.items():
+                json_endpoints[label] = endpoint.model_dump()
+            
+            # Update cache
+            await endpoints_cache.update_endpoints(json_endpoints)
+            
+            logger.debug(f"Endpoints cache refreshed: {len(json_endpoints)} endpoint(s)")
+            
+        except Exception as e:
+            logger.error(f"Error refreshing endpoints cache: {e}")
+        
+        # Wait for next refresh interval
+        await asyncio.sleep(refresh_interval)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Lifespan event handler for startup and shutdown.
-    Manages the discovery loop lifecycle.
+    Manages the discovery loop and endpoints cache refresh lifecycle.
     """
     # Startup
     logger.info("Starting application...")
@@ -25,8 +65,12 @@ async def lifespan(app: FastAPI):
         # Start discovery loop as background task
         asyncio.create_task(discovery_manager.start_discovery_loop())
         logger.info("Discovery loop started")
+        
+        # Start endpoints cache refresh loop as background task
+        asyncio.create_task(start_endpoints_refresh_loop())
+        logger.info("Endpoints refresh loop started")
     except Exception as e:
-        logger.error(f"Failed to start discovery loop: {e}")
+        logger.error(f"Failed to start background tasks: {e}")
         raise
     
     yield  # Application is running

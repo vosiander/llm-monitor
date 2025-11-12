@@ -1,8 +1,9 @@
-"""Environment configuration for network discovery"""
+"""Environment configuration for network discovery and LiteLLM"""
 import os
 import ipaddress
 from loguru import logger
-from llm_monitor.schema import DiscoveryConfig
+from typing import Optional
+from llm_monitor.schema import DiscoveryConfig, LiteLLMConfig
 
 
 def parse_cidr_ranges(ranges_str: str) -> list[str]:
@@ -105,3 +106,49 @@ def load_discovery_config() -> DiscoveryConfig:
     
     logger.info(f"Discovery configuration loaded successfully: {len(cidr_ranges)} CIDR range(s)")
     return config
+
+
+def load_litellm_config() -> Optional[LiteLLMConfig]:
+    """
+    Load LiteLLM configuration from environment variables.
+    
+    Optional environment variables:
+        LITELLM_URL: LiteLLM API base URL
+        LITELLM_MASTER_KEY: Master API key for authentication
+    
+    Returns:
+        LiteLLMConfig object if configured, None otherwise
+    """
+    litellm_url = os.getenv('LITELLM_URL')
+    litellm_master_key = os.getenv('LITELLM_MASTER_KEY')
+    
+    if not litellm_url or not litellm_master_key:
+        logger.info("LiteLLM not configured (LITELLM_URL and/or LITELLM_MASTER_KEY not set)")
+        return None
+    
+    logger.info(f"LiteLLM configuration loaded: {litellm_url}")
+    
+    return LiteLLMConfig(
+        url=litellm_url.rstrip('/'),
+        master_key=litellm_master_key
+    )
+
+
+def load_endpoints_refresh_interval() -> int:
+    """
+    Load endpoints refresh interval from environment variables.
+    
+    Optional environment variable:
+        LLM_TRIGGER_ENDPOINTS_IN_SECONDS: Interval in seconds for refreshing endpoints cache (default: 10)
+    
+    Returns:
+        Refresh interval in seconds
+    """
+    interval = int(os.getenv('LLM_TRIGGER_ENDPOINTS_IN_SECONDS', '10'))
+    
+    if interval < 1:
+        logger.warning(f"LLM_TRIGGER_ENDPOINTS_IN_SECONDS must be at least 1, got {interval}. Using default: 10")
+        interval = 10
+    
+    logger.info(f"Endpoints refresh interval: {interval} seconds")
+    return interval

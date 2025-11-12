@@ -4,10 +4,27 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import httpx
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from llm_monitor import get_discovery_manager
+from llm_monitor.schema import BulkCreateRequest
+from llm_monitor.litellm_client import LiteLLMClient
+from llm_monitor.env_config import load_litellm_config
+from llm_monitor.endpoints_cache import get_endpoints_cache
 
 router = APIRouter()
+
+# Global LiteLLM client instance
+_litellm_client: Optional[LiteLLMClient] = None
+
+
+def get_litellm_client() -> Optional[LiteLLMClient]:
+    """Get or initialize the LiteLLM client"""
+    global _litellm_client
+    if _litellm_client is None:
+        config = load_litellm_config()
+        if config:
+            _litellm_client = LiteLLMClient(config)
+    return _litellm_client
 
 
 class PullRequest(BaseModel):
@@ -32,26 +49,21 @@ class DeleteRequest(BaseModel):
 @router.get("")
 async def get_index():
     """
-    Get status of all discovered Ollama endpoints.
+    Get status of all discovered Ollama endpoints from cache.
+    
+    The endpoint data is cached and refreshed periodically by a background task
+    to reduce load when multiple clients are polling this endpoint.
     
     Returns:
         JSON response with endpoints and their status
     """
-    logger.info("GET /llmm endpoint called")
+    logger.trace("GET /llmm endpoint called (serving from cache)")
     
-    # Get discovery manager and its plugin service
-    discovery_manager = get_discovery_manager()
-    plugin_service = discovery_manager.get_plugin_service()
+    # Get cached endpoints
+    endpoints_cache = get_endpoints_cache()
+    json_endpoints = await endpoints_cache.get_endpoints()
     
-    # Fetch endpoints from all plugins
-    endpoints = plugin_service.llm_endpoints()
-    
-    # Convert to JSON-serializable format
-    json_endpoints = {}
-    for label, endpoint in endpoints.items():
-        json_endpoints[label] = endpoint.model_dump()
-    
-    logger.info(f"Returning {len(json_endpoints)} endpoint(s)")
+    logger.trace(f"Returning {len(json_endpoints)} endpoint(s) from cache")
     
     return Response(
         content=json.dumps({"endpoints": json_endpoints}),
@@ -290,3 +302,218 @@ async def delete_model(label: str, request: DeleteRequest):
     except Exception as e:
         logger.error(f"Unexpected error during model deletion: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/litellm/status")
+async def get_litellm_status():
+    """
+    Get LiteLLM configuration and connection status.
+    
+    Returns:
+        JSON response with LiteLLM status
+    """
+    logger.info("GET /llmm/litellm/status called")
+    
+    client = get_litellm_client()
+    
+    if client is None:
+        return Response(
+            content=json.dumps({
+                "configured": False,
+                "available": False,
+                "url": None
+            }),
+            media_type="application/json"
+        )
+    
+    # Check if LiteLLM API is available
+    is_available = await client.check_health()
+    
+    return Response(
+        content=json.dumps({
+            "configured": True,
+            "available": is_available,
+            "url": client.base_url
+        }),
+        media_type="application/json"
+    )
+
+
+@router.post("/litellm/models/bulk-create")
+async def bulk_create_litellm_models(request: BulkCreateRequest):
+    """
+    Create models in LiteLLM for multiple Ollama hosts.
+    
+    Args:
+        request: Bulk create request with model_name and host_labels
+    
+    Returns:
+        JSON response with creation results
+    """
+    logger.info(f"POST /llmm/litellm/models/bulk-create called for model: {request.model_name}")
+    logger.info(f"Host labels: {request.host_labels}")
+    
+    # Check if LiteLLM is configured
+    client = get_litellm_client()
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LiteLLM is not configured. Set LITELLM_URL and LITELLM_MASTER_KEY environment variables."
+        )
+    
+    # Get discovery manager and plugin service
+    discovery_manager = get_discovery_manager()
+    plugin_service = discovery_manager.get_plugin_service()
+    
+    results = []
+    
+    for label in request.host_labels:
+        # Find the plugin for this label
+        if label not in plugin_service.plugins:
+            logger.warning(f"Plugin not found for label: {label}")
+            results.append({
+                "host": label,
+                "success": False,
+                "error": f"Host '{label}' not found"
+            })
+            continue
+        
+        plugin = plugin_service.plugins[label]
+        
+        # Generate unique model_id for this host
+        model_id = f"{label}-{request.model_name}"
+        # Use the provided model name
+        model_name = request.model_name
+        ollama_api_base = f"http://{plugin.ip}:{plugin.port}"
+        
+        try:
+            # Create model in LiteLLM
+            response = await client.create_model(
+                model_id=model_id,
+                model_name=model_name,
+                ollama_model=request.ollama_model,
+                api_base=ollama_api_base
+            )
+            
+            results.append({
+                "host": label,
+                "model_id": model_id,
+                "model_name": model_name,
+                "success": True,
+                "response": response
+            })
+            
+            logger.info(f"Successfully created LiteLLM model for {label}")
+            
+        except Exception as e:
+            logger.error(f"Failed to create LiteLLM model for {label}: {e}")
+            results.append({
+                "host": label,
+                "model_id": model_id,
+                "model_name": model_name,
+                "success": False,
+                "error": str(e)
+            })
+    
+    # Count successes and failures
+    successes = sum(1 for r in results if r.get("success"))
+    failures = len(results) - successes
+    
+    logger.info(f"Bulk create completed: {successes} succeeded, {failures} failed")
+    
+    return Response(
+        content=json.dumps({
+            "total": len(results),
+            "successes": successes,
+            "failures": failures,
+            "results": results
+        }),
+        media_type="application/json"
+    )
+
+
+@router.get("/litellm/models/{label}")
+async def get_litellm_models_for_host(label: str):
+    """
+    Get all LiteLLM models for a specific host.
+    
+    Args:
+        label: The host label
+    
+    Returns:
+        JSON response with list of models for this host
+    """
+    logger.info(f"GET /llmm/litellm/models/{label} called")
+    
+    # Check if LiteLLM is configured
+    client = get_litellm_client()
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LiteLLM is not configured. Set LITELLM_URL and LITELLM_MASTER_KEY environment variables."
+        )
+    
+    try:
+        models = await client.get_models_for_host(label)
+        logger.info(f"Found {len(models)} LiteLLM model(s) for host {label}")
+        
+        return Response(
+            content=json.dumps({"models": models}),
+            media_type="application/json"
+        )
+    except Exception as e:
+        logger.error(f"Failed to get LiteLLM models for {label}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve models: {str(e)}"
+        )
+
+
+@router.delete("/litellm/models/{model_id}")
+async def delete_litellm_model(model_id: str):
+    """
+    Delete a model from LiteLLM.
+    
+    Args:
+        model_id: The unique model ID to delete
+    
+    Returns:
+        JSON response with deletion result
+    """
+    logger.info(f"DELETE /llmm/litellm/models/{model_id} called")
+    
+    # Check if LiteLLM is configured
+    client = get_litellm_client()
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LiteLLM is not configured. Set LITELLM_URL and LITELLM_MASTER_KEY environment variables."
+        )
+    
+    try:
+        response = await client.delete_model(model_id)
+        logger.info(f"Successfully deleted LiteLLM model {model_id}")
+        
+        return Response(
+            content=json.dumps({
+                "status": "success",
+                "model_id": model_id,
+                "response": response
+            }),
+            media_type="application/json"
+        )
+    except httpx.HTTPError as e:
+        logger.error(f"Failed to delete LiteLLM model {model_id}: {e}")
+        error_detail = str(e)
+        if hasattr(e, 'response') and e.response:
+            error_detail = e.response.text
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete model: {error_detail}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error deleting LiteLLM model {model_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
+        )

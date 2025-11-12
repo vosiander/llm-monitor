@@ -47,9 +47,42 @@
           <span class="shortcut-hint">⌘ K</span>
         </div>
       </div>
+      <div v-if="selectedHosts.length > 0" class="bulk-actions-bar">
+        <div class="level">
+          <div class="level-left">
+            <div class="level-item">
+              <span class="has-text-weight-semibold">{{ selectedHosts.length }} host(s) selected</span>
+            </div>
+          </div>
+          <div class="level-right">
+            <div class="level-item">
+              <button class="button is-success" @click="openLitellmModal">
+                <span class="icon">
+                  <v-icon name="fa-plus-circle" />
+                </span>
+                <span>Create in LiteLLM</span>
+              </button>
+              <button class="button is-light ml-2" @click="selectedHosts = []">
+                <span class="icon">
+                  <v-icon name="fa-times" />
+                </span>
+                <span>Clear Selection</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
       <table class="table is-fullwidth">
         <thead>
           <tr>
+            <th style="width: 40px;">
+              <input
+                type="checkbox"
+                @change="toggleSelectAll"
+                :checked="allSelected"
+                :indeterminate.prop="someSelected"
+              >
+            </th>
             <th>
               <span class="icon-text">
                 <span class="icon"><v-icon name="fa-server" /></span>
@@ -86,6 +119,13 @@
         </thead>
         <tbody>
           <tr v-for="(plugin, label) in filteredEndpoints" :key="label">
+            <td>
+              <input
+                type="checkbox"
+                :checked="selectedHosts.includes(label)"
+                @change="toggleHostSelection(label)"
+              >
+            </td>
             <td>
               <div class="system-name">
                 <span class="status-dot" :class="{ 'is-online': plugin.is_online }"></span>
@@ -125,6 +165,12 @@
                     <v-icon name="fa-list" />
                   </span>
                   <span>List</span>
+                </button>
+                <button class="button is-success is-light" @click="openLitellmListModal(label)">
+                  <span class="icon">
+                    <v-icon name="fa-server" />
+                  </span>
+                  <span>LiteLLM</span>
                 </button>
                 <button class="button is-primary is-light" @click="openPullModal(label)">
                   <span class="icon">
@@ -363,6 +409,191 @@
         </footer>
       </div>
     </div>
+
+    <!-- LiteLLM Bulk Create Modal -->
+    <div v-if="litellmModalActive" class="modal is-active">
+      <div class="modal-background" @click="litellmModalActive = false"></div>
+      <div class="modal-card">
+        <header class="modal-card-head has-background-success">
+          <p class="modal-card-title has-text-white">Create Models in LiteLLM</p>
+          <button class="delete" aria-label="close" @click="litellmModalActive = false"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="field">
+            <label class="label">Model Name</label>
+            <div class="control">
+              <input
+                class="input"
+                type="text"
+                v-model="litellmModelName"
+                placeholder="e.g., blablub-gemma3, my-llama3"
+                :disabled="litellmCreating"
+              >
+            </div>
+            <p class="help">The name for the LiteLLM model (e.g., "blablub-gemma3")</p>
+          </div>
+
+          <div class="field">
+            <label class="label">Ollama Model</label>
+            <div class="control">
+              <input
+                class="input"
+                type="text"
+                v-model="litellmOllamaModel"
+                placeholder="ollama_chat/gemma3"
+                :disabled="litellmCreating"
+              >
+            </div>
+            <p class="help">The full Ollama model path (e.g., "ollama_chat/gemma3", "ollama_chat/llama3:8b")</p>
+          </div>
+
+          <div class="notification is-info is-light">
+            <p class="mb-2"><strong>Selected Hosts ({{ selectedHosts.length }}):</strong></p>
+            <ul class="ml-4">
+              <li v-for="host in selectedHosts" :key="host">{{ host }}</li>
+            </ul>
+          </div>
+
+          <div v-if="litellmModelName && litellmOllamaModel" class="notification is-light">
+            <p class="has-text-weight-semibold mb-2">Configuration:</p>
+            <div class="mt-3 mb-3">
+              <p><strong>Model Name:</strong> <code>{{ litellmModelName }}</code></p>
+              <p><strong>Ollama Model:</strong> <code>{{ litellmOllamaModel }}</code></p>
+              <p class="mt-2"><strong>Will create:</strong> {{ selectedHosts.length }} model(s)</p>
+            </div>
+            <p class="help has-text-centered">Each host will have a model with ID "{host}-{{ litellmModelName }}"</p>
+          </div>
+
+          <div v-if="litellmCreating" class="notification is-info">
+            <p><v-icon name="fa-circle-notch" class="fa-spin" /> Creating models in LiteLLM...</p>
+          </div>
+
+          <div v-if="litellmResults" class="results-section">
+            <div class="notification" :class="litellmResults.failures === 0 ? 'is-success' : 'is-warning'">
+              <p class="has-text-weight-semibold mb-2">
+                Creation completed: {{ litellmResults.successes }} succeeded, {{ litellmResults.failures }} failed
+              </p>
+            </div>
+            <div class="results-list">
+              <div
+                v-for="result in litellmResults.results"
+                :key="result.host"
+                class="result-item"
+                :class="result.success ? 'is-success' : 'is-danger'"
+              >
+                <span class="icon">
+                  <v-icon :name="result.success ? 'fa-check-circle' : 'fa-times-circle'" />
+                </span>
+                <span class="host-label">{{ result.host }}</span>
+                <span v-if="result.success" class="model-name">→ {{ result.litellm_model_name }}</span>
+                <span v-else class="error-text">{{ result.error }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button
+            v-if="!litellmResults"
+            class="button is-success"
+            @click="createLitellmModels"
+            :disabled="!litellmModelName || !litellmOllamaModel || litellmCreating || selectedHosts.length === 0"
+            :class="{ 'is-loading': litellmCreating }"
+          >
+            Create Models
+          </button>
+          <button class="button" @click="closeLitellmModal">
+            {{ litellmResults ? 'Close' : 'Cancel' }}
+          </button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- LiteLLM List Models Modal -->
+    <div v-if="litellmListModalActive" class="modal is-active">
+      <div class="modal-background" @click="closeLitellmListModal"></div>
+      <div class="modal-card">
+        <header class="modal-card-head has-background-success">
+          <p class="modal-card-title has-text-white">LiteLLM Models for {{ selectedHost }}</p>
+          <button class="delete" aria-label="close" @click="closeLitellmListModal"></button>
+        </header>
+        <section class="modal-card-body">
+          <div v-if="litellmListLoading" class="has-text-centered">
+            <v-icon name="fa-circle-notch" class="fa-spin" style="font-size: 2rem; color: #48c774;" />
+            <p class="mt-3">Loading LiteLLM models...</p>
+          </div>
+          <div v-else-if="litellmListModels.length === 0" class="has-text-centered">
+            <p class="has-text-grey">No LiteLLM models found for this host</p>
+            <p class="help mt-2">Models created for this host will appear here</p>
+          </div>
+          <div v-else class="models-list-container">
+            <p class="has-text-weight-semibold mb-3">LiteLLM Models ({{ litellmListModels.length }}):</p>
+            <ul class="model-items">
+              <li v-for="model in litellmListModels" :key="model.model_info.id" class="model-item">
+                <div class="model-item-content">
+                  <span class="icon has-text-success">
+                    <v-icon name="fa-server" />
+                  </span>
+                  <div class="model-info">
+                    <div class="model-name">{{ model.model_name }}</div>
+                    <div class="model-id">ID: {{ model.model_info.id }}</div>
+                  </div>
+                </div>
+                <button
+                  class="button is-danger is-small is-light"
+                  @click="confirmDeleteLitellmModel(model.model_info.id)"
+                  :disabled="litellmDeleteInProgress"
+                  title="Delete model from LiteLLM"
+                >
+                  <span class="icon">
+                    <v-icon name="fa-trash" />
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button class="button" @click="closeLitellmListModal">Close</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- LiteLLM Delete Confirmation Modal -->
+    <div v-if="litellmDeleteConfirmModal" class="modal is-active">
+      <div class="modal-background" @click="litellmDeleteConfirmModal = false"></div>
+      <div class="modal-card">
+        <header class="modal-card-head has-background-danger">
+          <p class="modal-card-title has-text-white">Confirm Delete from LiteLLM</p>
+          <button class="delete" aria-label="close" @click="litellmDeleteConfirmModal = false"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="content">
+            <p class="has-text-weight-semibold">Are you sure you want to delete this model from LiteLLM?</p>
+            <div class="notification is-warning is-light">
+              <p class="mb-2"><strong>Model ID:</strong> <code>{{ litellmModelToDelete }}</code></p>
+              <p class="mb-0"><strong>Host:</strong> {{ selectedHost }}</p>
+            </div>
+            <p class="has-text-danger">
+              <v-icon name="fa-exclamation-triangle" />
+              This will remove the model from LiteLLM but not from the Ollama host.
+            </p>
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button
+            class="button is-danger"
+            @click="deleteLitellmModel"
+            :class="{ 'is-loading': litellmDeleteInProgress }"
+            :disabled="litellmDeleteInProgress"
+          >
+            Delete from LiteLLM
+          </button>
+          <button class="button" @click="litellmDeleteConfirmModal = false" :disabled="litellmDeleteInProgress">
+            Cancel
+          </button>
+        </footer>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -400,8 +631,21 @@ export default {
       deleteConfirmModalActive: false,
       modelToDelete: null,
       deleteInProgress: false,
+      selectedHosts: [],
+      litellmModalActive: false,
+      litellmModelName: '',
+      litellmOllamaModel: '',
+      litellmCreating: false,
+      litellmResults: null,
+      litellmListModalActive: false,
+      litellmListModels: [],
+      litellmListLoading: false,
+      litellmDeleteInProgress: false,
+      litellmDeleteConfirmModal: false,
+      litellmModelToDelete: null,
     };
   },
+
   mounted() {
     this.fetchEndpoints();
     this.startRefresh();
@@ -429,8 +673,17 @@ export default {
           return labelMatch || modelsMatch;
         })
       );
+    },
+    allSelected() {
+      if (!this.endpoints) return false;
+      const allHosts = Object.keys(this.endpoints);
+      return allHosts.length > 0 && this.selectedHosts.length === allHosts.length;
+    },
+    someSelected() {
+      return this.selectedHosts.length > 0 && !this.allSelected;
     }
   },
+
   methods: {
     handleKeyboardShortcut(event) {
       // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
@@ -755,6 +1008,117 @@ export default {
     openFullscreenChat() {
       // Navigate to the fullscreen chat route
       this.$router.push(`/chat/${this.selectedHost}`);
+    },
+    toggleSelectAll() {
+      if (this.allSelected) {
+        this.selectedHosts = [];
+      } else {
+        this.selectedHosts = Object.keys(this.endpoints || {});
+      }
+    },
+    toggleHostSelection(label) {
+      const index = this.selectedHosts.indexOf(label);
+      if (index > -1) {
+        this.selectedHosts.splice(index, 1);
+      } else {
+        this.selectedHosts.push(label);
+      }
+    },
+    openLitellmModal() {
+      this.litellmModalActive = true;
+      this.litellmModelName = '';
+      this.litellmOllamaModel = '';
+      this.litellmCreating = false;
+      this.litellmResults = null;
+    },
+    async createLitellmModels() {
+      if (!this.litellmModelName || !this.litellmOllamaModel || this.selectedHosts.length === 0) return;
+
+      this.litellmCreating = true;
+      this.litellmResults = null;
+
+      try {
+        const response = await this.llmmonitor.axios.post('/llmm/litellm/models/bulk-create', {
+          model_name: this.litellmModelName,
+          ollama_model: this.litellmOllamaModel,
+          host_labels: this.selectedHosts
+        });
+
+        this.litellmResults = response.data;
+      } catch (error) {
+        console.error('Error creating LiteLLM models:', error);
+        alert(`Failed to create models: ${error.response?.data?.detail || error.message}`);
+      } finally {
+        this.litellmCreating = false;
+      }
+    },
+    closeLitellmModal() {
+      this.litellmModalActive = false;
+      this.litellmModelName = '';
+      this.litellmOllamaModel = '';
+      this.litellmCreating = false;
+      this.litellmResults = null;
+      // Clear selection after closing
+      this.selectedHosts = [];
+    },
+    async openLitellmListModal(label) {
+      this.selectedHost = label;
+      this.litellmListModalActive = true;
+      this.litellmListModels = [];
+      this.litellmListLoading = true;
+
+      // Fetch LiteLLM models for this host
+      try {
+        const response = await this.llmmonitor.axios.get(`/llmm/litellm/models/${label}`);
+        this.litellmListModels = response.data.models || [];
+      } catch (error) {
+        console.error('Error fetching LiteLLM models:', error);
+        this.litellmListModels = [];
+      } finally {
+        this.litellmListLoading = false;
+      }
+    },
+    closeLitellmListModal() {
+      this.litellmListModalActive = false;
+      this.litellmListModels = [];
+      this.litellmListLoading = false;
+    },
+    confirmDeleteLitellmModel(modelId) {
+      this.litellmModelToDelete = modelId;
+      this.litellmDeleteConfirmModal = true;
+    },
+    async deleteLitellmModel() {
+      if (!this.litellmModelToDelete) return;
+
+      this.litellmDeleteInProgress = true;
+
+      try {
+        const response = await this.llmmonitor.axios.delete(
+          `/llmm/litellm/models/${this.litellmModelToDelete}`
+        );
+
+        if (response.data.status === 'success') {
+          // Close confirmation modal
+          this.litellmDeleteConfirmModal = false;
+          this.litellmModelToDelete = null;
+
+          // Refresh the LiteLLM model list
+          this.litellmListLoading = true;
+          try {
+            const refreshResponse = await this.llmmonitor.axios.get(`/llmm/litellm/models/${this.selectedHost}`);
+            this.litellmListModels = refreshResponse.data.models || [];
+          } catch (error) {
+            console.error('Error refreshing LiteLLM models:', error);
+          } finally {
+            this.litellmListLoading = false;
+          }
+        }
+      } catch (error) {
+        console.error('Error deleting LiteLLM model:', error);
+        alert(`Failed to delete model from LiteLLM: ${error.response?.data?.detail || error.message}`);
+      } finally {
+        this.litellmDeleteInProgress = false;
+      }
     },
   },
 };
@@ -1125,5 +1489,87 @@ export default {
   font-family: monospace;
   font-size: 0.95rem;
   color: #363636;
+  font-weight: 600;
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.model-id {
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: #999;
+}
+
+/* Bulk Actions Bar */
+.bulk-actions-bar {
+  padding: 1rem 1.5rem;
+  background-color: #f0f9ff;
+  border-bottom: 2px solid #3298dc;
+  margin-bottom: 0;
+}
+
+.bulk-actions-bar .level {
+  margin-bottom: 0;
+}
+
+/* LiteLLM Results */
+.results-section {
+  margin-top: 1rem;
+}
+
+.results-list {
+  margin-top: 0.75rem;
+}
+
+.result-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  background-color: #f9f9f9;
+  border: 1px solid #e8e8e8;
+}
+
+.result-item.is-success {
+  background-color: #ebfbee;
+  border-color: #48c774;
+}
+
+.result-item.is-danger {
+  background-color: #feecf0;
+  border-color: #f14668;
+}
+
+.result-item .icon {
+  font-size: 1.25rem;
+}
+
+.result-item.is-success .icon {
+  color: #48c774;
+}
+
+.result-item.is-danger .icon {
+  color: #f14668;
+}
+
+.result-item .host-label {
+  font-weight: 600;
+  min-width: 150px;
+}
+
+.result-item .model-name {
+  font-family: monospace;
+  color: #363636;
+}
+
+.result-item .error-text {
+  color: #f14668;
+  font-size: 0.875rem;
 }
 </style>
