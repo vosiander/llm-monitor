@@ -6,7 +6,7 @@ import json
 import httpx
 from typing import List, Dict, Any, Optional
 from llm_monitor import get_discovery_manager
-from llm_monitor.schema import BulkCreateRequest
+from llm_monitor.schema import BulkCreateRequest, BulkPurgeRequest
 from llm_monitor.litellm_client import LiteLLMClient
 from llm_monitor.env_config import load_litellm_config
 from llm_monitor.endpoints_cache import get_endpoints_cache
@@ -517,3 +517,107 @@ async def delete_litellm_model(model_id: str):
             status_code=500,
             detail=f"Unexpected error: {str(e)}"
         )
+
+
+@router.post("/litellm/models/bulk-purge")
+async def bulk_purge_litellm_models(request: BulkPurgeRequest):
+    """
+    Purge all LiteLLM models for multiple hosts.
+    
+    Args:
+        request: Bulk purge request with host_labels
+    
+    Returns:
+        JSON response with purge results
+    """
+    logger.info(f"POST /llmm/litellm/models/bulk-purge called")
+    logger.info(f"Host labels: {request.host_labels}")
+    
+    # Check if LiteLLM is configured
+    client = get_litellm_client()
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LiteLLM is not configured. Set LITELLM_URL and LITELLM_MASTER_KEY environment variables."
+        )
+    
+    results = []
+    total_models_deleted = 0
+    
+    for label in request.host_labels:
+        try:
+            # Get all models for this host
+            models = await client.get_models_for_host(label)
+            
+            if not models:
+                logger.info(f"No models found for host {label}")
+                results.append({
+                    "host": label,
+                    "models_deleted": 0,
+                    "success": True,
+                    "deleted_models": [],
+                    "message": "No models found"
+                })
+                continue
+            
+            # Delete each model
+            deleted_models = []
+            failed_models = []
+            
+            for model in models:
+                model_id = model.get("model_info", {}).get("id")
+                if not model_id:
+                    logger.warning(f"Model missing id: {model}")
+                    continue
+                
+                try:
+                    await client.delete_model(model_id)
+                    deleted_models.append(model_id)
+                    logger.info(f"Deleted model {model_id} from host {label}")
+                except Exception as e:
+                    logger.error(f"Failed to delete model {model_id}: {e}")
+                    failed_models.append({
+                        "model_id": model_id,
+                        "error": str(e)
+                    })
+            
+            total_models_deleted += len(deleted_models)
+            
+            # Determine if this host's purge was successful
+            success = len(failed_models) == 0
+            
+            results.append({
+                "host": label,
+                "models_deleted": len(deleted_models),
+                "success": success,
+                "deleted_models": deleted_models,
+                "failed_models": failed_models if failed_models else None
+            })
+            
+            logger.info(f"Purged {len(deleted_models)} model(s) for host {label}")
+            
+        except Exception as e:
+            logger.error(f"Failed to purge models for host {label}: {e}")
+            results.append({
+                "host": label,
+                "models_deleted": 0,
+                "success": False,
+                "error": str(e)
+            })
+    
+    # Count successes and failures
+    successes = sum(1 for r in results if r.get("success"))
+    failures = len(results) - successes
+    
+    logger.info(f"Bulk purge completed: {successes} hosts succeeded, {failures} hosts failed, {total_models_deleted} total models deleted")
+    
+    return Response(
+        content=json.dumps({
+            "total_hosts": len(results),
+            "total_models_deleted": total_models_deleted,
+            "successes": successes,
+            "failures": failures,
+            "results": results
+        }),
+        media_type="application/json"
+    )

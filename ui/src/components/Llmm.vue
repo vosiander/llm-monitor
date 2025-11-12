@@ -62,6 +62,12 @@
                 </span>
                 <span>Create in LiteLLM</span>
               </button>
+              <button class="button is-danger ml-2" @click="openLitellmPurgeModal">
+                <span class="icon">
+                  <v-icon name="fa-fire" />
+                </span>
+                <span>Purge from LiteLLM</span>
+              </button>
               <button class="button is-light ml-2" @click="selectedHosts = []">
                 <span class="icon">
                   <v-icon name="fa-times" />
@@ -594,6 +600,82 @@
         </footer>
       </div>
     </div>
+
+    <!-- LiteLLM Bulk Purge Modal -->
+    <div v-if="litellmPurgeModalActive" class="modal is-active">
+      <div class="modal-background" @click="litellmPurgeModalActive = false"></div>
+      <div class="modal-card">
+        <header class="modal-card-head has-background-danger">
+          <p class="modal-card-title has-text-white">Purge Models from LiteLLM</p>
+          <button class="delete" aria-label="close" @click="litellmPurgeModalActive = false"></button>
+        </header>
+        <section class="modal-card-body">
+          <div v-if="!litellmPurgeResults">
+            <div class="content">
+              <p class="has-text-weight-semibold mb-3">
+                <v-icon name="fa-exclamation-triangle" class="has-text-danger" />
+                Warning: This will delete ALL LiteLLM models for the selected hosts!
+              </p>
+              <div class="notification is-danger is-light">
+                <p class="mb-2"><strong>Selected Hosts ({{ selectedHosts.length }}):</strong></p>
+                <ul class="ml-4">
+                  <li v-for="host in selectedHosts" :key="host">{{ host }}</li>
+                </ul>
+              </div>
+              <p class="has-text-danger">
+                <v-icon name="fa-fire" />
+                This action cannot be undone. All LiteLLM models for these hosts will be permanently removed.
+              </p>
+              <p class="help mt-3">
+                Note: This only removes models from LiteLLM. Models will remain on the Ollama hosts.
+              </p>
+            </div>
+
+            <div v-if="litellmPurging" class="notification is-danger">
+              <p><v-icon name="fa-circle-notch" class="fa-spin" /> Purging models from LiteLLM...</p>
+            </div>
+          </div>
+
+          <div v-if="litellmPurgeResults" class="results-section">
+            <div class="notification" :class="litellmPurgeResults.failures === 0 ? 'is-success' : 'is-warning'">
+              <p class="has-text-weight-semibold mb-2">
+                Purge completed: {{ litellmPurgeResults.successes }} host(s) succeeded, {{ litellmPurgeResults.failures }} failed
+              </p>
+              <p class="mb-0">Total models deleted: {{ litellmPurgeResults.total_models_deleted }}</p>
+            </div>
+            <div class="results-list">
+              <div
+                v-for="result in litellmPurgeResults.results"
+                :key="result.host"
+                class="result-item"
+                :class="result.success ? 'is-success' : 'is-danger'"
+              >
+                <span class="icon">
+                  <v-icon :name="result.success ? 'fa-check-circle' : 'fa-times-circle'" />
+                </span>
+                <span class="host-label">{{ result.host }}</span>
+                <span v-if="result.success" class="model-count">{{ result.models_deleted }} model(s) deleted</span>
+                <span v-else class="error-text">{{ result.error }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button
+            v-if="!litellmPurgeResults"
+            class="button is-danger"
+            @click="purgeLitellmModels"
+            :disabled="litellmPurging || selectedHosts.length === 0"
+            :class="{ 'is-loading': litellmPurging }"
+          >
+            Purge All Models
+          </button>
+          <button class="button" @click="closeLitellmPurgeModal">
+            {{ litellmPurgeResults ? 'Close' : 'Cancel' }}
+          </button>
+        </footer>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -644,6 +726,9 @@ export default {
       litellmDeleteInProgress: false,
       litellmDeleteConfirmModal: false,
       litellmModelToDelete: null,
+      litellmPurgeModalActive: false,
+      litellmPurging: false,
+      litellmPurgeResults: null,
     };
   },
 
@@ -1120,6 +1205,37 @@ export default {
       } finally {
         this.litellmDeleteInProgress = false;
       }
+    },
+    openLitellmPurgeModal() {
+      this.litellmPurgeModalActive = true;
+      this.litellmPurging = false;
+      this.litellmPurgeResults = null;
+    },
+    async purgeLitellmModels() {
+      if (this.selectedHosts.length === 0) return;
+
+      this.litellmPurging = true;
+      this.litellmPurgeResults = null;
+
+      try {
+        const response = await this.llmmonitor.axios.post('/llmm/litellm/models/bulk-purge', {
+          host_labels: this.selectedHosts
+        });
+
+        this.litellmPurgeResults = response.data;
+      } catch (error) {
+        console.error('Error purging LiteLLM models:', error);
+        alert(`Failed to purge models: ${error.response?.data?.detail || error.message}`);
+      } finally {
+        this.litellmPurging = false;
+      }
+    },
+    closeLitellmPurgeModal() {
+      this.litellmPurgeModalActive = false;
+      this.litellmPurging = false;
+      this.litellmPurgeResults = null;
+      // Clear selection after closing
+      this.selectedHosts = [];
     },
   },
 };

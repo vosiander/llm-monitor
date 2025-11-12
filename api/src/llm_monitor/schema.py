@@ -63,3 +63,8 @@ class BulkCreateRequest(BaseModel):
     model_name: str = Field(description="Model name to create in LiteLLM (e.g., 'blablub-gemma3')")
     ollama_model: str = Field(description="Ollama model to use (e.g., 'gemma3' which will be formatted as 'ollama_chat/gemma3')")
     host_labels: list[str] = Field(description="List of host labels to create models for")
+
+
+class BulkPurgeRequest(BaseModel):
+    """Request to purge all LiteLLM models for multiple hosts"""
+    host_labels: list[str] = Field(description="List of host labels to purge models for")
