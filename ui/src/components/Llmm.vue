@@ -47,7 +47,7 @@
           <span class="shortcut-hint">⌘ K</span>
         </div>
       </div>
-      <div v-if="selectedHosts.length > 0" class="bulk-actions-bar">
+      <div v-if="selectedHosts.length > 0 && litellmStatus.available" class="bulk-actions-bar">
         <div class="level">
           <div class="level-left">
             <div class="level-item">
@@ -75,7 +75,7 @@
       <table class="table is-fullwidth">
         <thead>
           <tr>
-            <th style="width: 40px;">
+            <th v-if="litellmStatus.available" style="width: 40px;">
               <input
                 type="checkbox"
                 @change="toggleSelectAll"
@@ -119,7 +119,7 @@
         </thead>
         <tbody>
           <tr v-for="(plugin, label) in filteredEndpoints" :key="label">
-            <td>
+            <td v-if="litellmStatus.available">
               <input
                 type="checkbox"
                 :checked="selectedHosts.includes(label)"
@@ -166,7 +166,7 @@
                   </span>
                   <span>List</span>
                 </button>
-                <button class="button is-success is-light" @click="openLitellmListModal(label)">
+                <button v-if="litellmStatus.available" class="button is-success is-light" @click="openLitellmListModal(label)">
                   <span class="icon">
                     <v-icon name="fa-server" />
                   </span>
@@ -606,6 +606,7 @@ export default {
     return {
       llmmonitor: inject('llmmonitor'),
       refreshState: inject('refreshState'),
+      litellmStatus: inject('litellmStatus'),
       endpoints: null,
       intervalId: null,
       refreshInterval: 5000, // Default 5 seconds

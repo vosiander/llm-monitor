@@ -12,6 +12,9 @@ const litellmStatus = ref({
   url: null
 })
 
+// Provide LiteLLM status to child components
+provide('litellmStatus', litellmStatus)
+
 onMounted(async () => {
   try {
     const response = await llmmonitor.axios.get('/llmm/litellm/status')
