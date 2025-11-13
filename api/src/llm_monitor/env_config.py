@@ -144,7 +144,7 @@ def load_endpoints_refresh_interval() -> int:
     Returns:
         Refresh interval in seconds
     """
-    interval = int(os.getenv('LLM_TRIGGER_ENDPOINTS_IN_SECONDS', '10'))
+    interval = int(os.getenv('LLM_TRIGGER_ENDPOINTS_IN_SECONDS', '30'))
     
     if interval < 1:
         logger.warning(f"LLM_TRIGGER_ENDPOINTS_IN_SECONDS must be at least 1, got {interval}. Using default: 10")

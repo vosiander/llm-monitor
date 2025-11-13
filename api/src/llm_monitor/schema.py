@@ -27,6 +27,7 @@ class ProcessStatus(BaseModel):
     is_online: bool
     ip: str = ""
     port: int = 11434
+    version: Optional[str] = None
 
 
 class DiscoveredHost(BaseModel):

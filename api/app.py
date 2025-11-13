@@ -28,16 +28,8 @@ async def start_endpoints_refresh_loop():
     
     while True:
         try:
-            # Get discovery manager and fetch endpoints
-            discovery_manager = get_discovery_manager()
-            plugin_service = discovery_manager.get_plugin_service()
-            
-            # Fetch fresh endpoint data
-            endpoints = plugin_service.llm_endpoints()
-            
-            # Convert to JSON-serializable format
             json_endpoints = {}
-            for label, endpoint in endpoints.items():
+            for label, endpoint in get_discovery_manager().get_plugin_service().llm_endpoints().items():
                 json_endpoints[label] = endpoint.model_dump()
             
             # Update cache
@@ -61,9 +53,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting application...")
     try:
-        discovery_manager = get_discovery_manager()
-        # Start discovery loop as background task
-        asyncio.create_task(discovery_manager.start_discovery_loop())
+        asyncio.create_task(get_discovery_manager().start_discovery_loop())
         logger.info("Discovery loop started")
         
         # Start endpoints cache refresh loop as background task
@@ -78,8 +68,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down application...")
     try:
-        discovery_manager = get_discovery_manager()
-        await discovery_manager.stop()
+        await get_discovery_manager().stop()
         logger.info("Discovery manager stopped")
     except Exception as e:
         logger.error(f"Error stopping discovery manager: {e}")

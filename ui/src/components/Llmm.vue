@@ -97,6 +97,12 @@
             </th>
             <th>
               <span class="icon-text">
+                <span class="icon"><v-icon name="fa-tag" /></span>
+                <span>Version</span>
+              </span>
+            </th>
+            <th>
+              <span class="icon-text">
                 <span class="icon"><v-icon name="fa-network-wired" /></span>
                 <span>IP Address</span>
               </span>
@@ -139,6 +145,9 @@
               </div>
             </td>
             <td>
+              <span class="version-text">{{ plugin.version || '-' }}</span>
+            </td>
+            <td>
               <div class="ip-address">
                 {{ plugin.ip || 'N/A' }}
               </div>
@@ -165,31 +174,47 @@
               </div>
             </td>
             <td>
-              <div class="buttons are-small">
-                <button class="button is-link is-light" @click="openListModal(label)">
-                  <span class="icon">
-                    <v-icon name="fa-list" />
-                  </span>
-                  <span>List</span>
-                </button>
-                <button v-if="litellmStatus.available" class="button is-success is-light" @click="openLitellmListModal(label)">
-                  <span class="icon">
-                    <v-icon name="fa-server" />
-                  </span>
-                  <span>LiteLLM</span>
-                </button>
-                <button class="button is-primary is-light" @click="openPullModal(label)">
-                  <span class="icon">
-                    <v-icon name="fa-download" />
-                  </span>
-                  <span>Pull</span>
-                </button>
-                <button class="button is-info is-light" @click="openChatModal(label)">
-                  <span class="icon">
-                    <v-icon name="fa-comments" />
-                  </span>
-                  <span>Run</span>
-                </button>
+              <div class="dropdown is-right" :class="{ 'is-active': activeDropdown === label }">
+                <div class="dropdown-trigger">
+                  <button
+                    class="button is-small"
+                    @click="toggleDropdown(label)"
+                    aria-haspopup="true"
+                    :aria-controls="`dropdown-menu-${label}`"
+                  >
+                    <span class="icon">
+                      <v-icon name="fa-ellipsis-v" />
+                    </span>
+                  </button>
+                </div>
+                <div class="dropdown-menu" :id="`dropdown-menu-${label}`" role="menu" @click="closeDropdown">
+                  <div class="dropdown-content">
+                    <a href="#" class="dropdown-item" @click.prevent="openListModal(label)">
+                      <span class="icon">
+                        <v-icon name="fa-list" />
+                      </span>
+                      <span>List Models</span>
+                    </a>
+                    <a v-if="litellmStatus.available" href="#" class="dropdown-item" @click.prevent="openLitellmListModal(label)">
+                      <span class="icon">
+                        <v-icon name="fa-server" />
+                      </span>
+                      <span>LiteLLM Models</span>
+                    </a>
+                    <a href="#" class="dropdown-item" @click.prevent="openPullModal(label)">
+                      <span class="icon">
+                        <v-icon name="fa-download" />
+                      </span>
+                      <span>Pull Model</span>
+                    </a>
+                    <a href="#" class="dropdown-item" @click.prevent="openChatModal(label)">
+                      <span class="icon">
+                        <v-icon name="fa-comments" />
+                      </span>
+                      <span>Run Chat</span>
+                    </a>
+                  </div>
+                </div>
               </div>
             </td>
           </tr>
@@ -729,6 +754,7 @@ export default {
       litellmPurgeModalActive: false,
       litellmPurging: false,
       litellmPurgeResults: null,
+      activeDropdown: null,
     };
   },
 
@@ -1237,6 +1263,16 @@ export default {
       // Clear selection after closing
       this.selectedHosts = [];
     },
+    toggleDropdown(label) {
+      if (this.activeDropdown === label) {
+        this.activeDropdown = null;
+      } else {
+        this.activeDropdown = label;
+      }
+    },
+    closeDropdown() {
+      this.activeDropdown = null;
+    },
   },
 };
 </script>
@@ -1329,10 +1365,24 @@ export default {
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+  overflow: visible;
 }
 
 .table {
   width: 100%;
+  overflow: visible;
+}
+
+.table tbody {
+  overflow: visible;
+}
+
+.table tbody tr {
+  overflow: visible;
+}
+
+.table tbody tr td {
+  overflow: visible;
 }
 
 .table th {
@@ -1556,6 +1606,13 @@ export default {
   color: #666;
 }
 
+.version-text {
+  font-size: 0.85rem;
+  color: #7957d5;
+  font-weight: 600;
+  font-family: monospace;
+}
+
 .ip-address {
   font-size: 0.9rem;
   color: #363636;
@@ -1688,5 +1745,18 @@ export default {
 .result-item .error-text {
   color: #f14668;
   font-size: 0.875rem;
+}
+
+/* Dropdown z-index fix - ensure dropdown appears above table content */
+.dropdown {
+  position: relative;
+}
+
+.dropdown-menu {
+  z-index: 100;
+}
+
+.dropdown.is-active .dropdown-menu {
+  display: block;
 }
 </style>
