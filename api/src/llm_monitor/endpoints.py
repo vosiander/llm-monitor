@@ -10,6 +10,7 @@ from llm_monitor.schema import BulkCreateRequest, BulkPurgeRequest
 from llm_monitor.litellm_client import LiteLLMClient
 from llm_monitor.env_config import load_litellm_config
 from llm_monitor.endpoints_cache import get_endpoints_cache
+from llm_monitor.tick_funnel import get_tick_funnel
 
 router = APIRouter()
 
@@ -44,6 +45,24 @@ class ChatRequest(BaseModel):
 
 class DeleteRequest(BaseModel):
     model_name: str
+
+
+@router.post("/tick")
+async def tick():
+    """
+    Signal user activity to the TickFunnel system.
+    
+    This lightweight endpoint is called by the frontend to indicate user activity.
+    The TickFunnel uses tick rate to adaptively trigger endpoint cache refreshes:
+    - High activity (>= 4 ticks in 5s window) → immediate refresh
+    - Low activity → delayed refresh (max 60s)
+    
+    Returns:
+        204 No Content
+    """
+    logger.trace("POST /llmm/tick called")
+    await get_tick_funnel().tick()
+    return Response(status_code=204)
 
 
 @router.get("")

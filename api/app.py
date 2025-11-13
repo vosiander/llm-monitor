@@ -10,45 +10,38 @@ from llm_monitor import init_discovery_manager, get_discovery_manager
 from llm_monitor.env_config import load_discovery_config, load_endpoints_refresh_interval
 from llm_monitor.endpoints import router as llmm
 from llm_monitor.endpoints_cache import get_endpoints_cache
+from llm_monitor.tick_funnel import get_tick_funnel
 from loguru import logger
 
 
-async def start_endpoints_refresh_loop():
+async def refresh_endpoints_cache():
     """
-    Background task that periodically refreshes the endpoints cache.
+    Refresh the endpoints cache with current data from all discovered hosts.
     
-    This reduces load on Ollama hosts when multiple clients are polling
-    the /llmm endpoint by serving cached data instead of querying hosts
-    on every request.
+    This function is called by the TickFunnel system based on user activity.
+    High activity triggers immediate refresh, low activity delays up to 60s.
     """
-    refresh_interval = load_endpoints_refresh_interval()
     endpoints_cache = get_endpoints_cache()
     
-    logger.info(f"Starting endpoints refresh loop (interval: {refresh_interval}s)")
-    
-    while True:
-        try:
-            json_endpoints = {}
-            for label, endpoint in get_discovery_manager().get_plugin_service().llm_endpoints().items():
-                json_endpoints[label] = endpoint.model_dump()
-            
-            # Update cache
-            await endpoints_cache.update_endpoints(json_endpoints)
-            
-            logger.debug(f"Endpoints cache refreshed: {len(json_endpoints)} endpoint(s)")
-            
-        except Exception as e:
-            logger.error(f"Error refreshing endpoints cache: {e}")
+    try:
+        json_endpoints = {}
+        for label, endpoint in get_discovery_manager().get_plugin_service().llm_endpoints().items():
+            json_endpoints[label] = endpoint.model_dump()
         
-        # Wait for next refresh interval
-        await asyncio.sleep(refresh_interval)
+        # Update cache
+        await endpoints_cache.update_endpoints(json_endpoints)
+        
+        logger.debug(f"Endpoints cache refreshed: {len(json_endpoints)} endpoint(s)")
+        
+    except Exception as e:
+        logger.error(f"Error refreshing endpoints cache: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Lifespan event handler for startup and shutdown.
-    Manages the discovery loop and endpoints cache refresh lifecycle.
+    Manages the discovery loop and TickFunnel-based cache refresh lifecycle.
     """
     # Startup
     logger.info("Starting application...")
@@ -56,9 +49,10 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(get_discovery_manager().start_discovery_loop())
         logger.info("Discovery loop started")
         
-        # Start endpoints cache refresh loop as background task
-        asyncio.create_task(start_endpoints_refresh_loop())
-        logger.info("Endpoints refresh loop started")
+        # Start TickFunnel with adaptive refresh
+        tick_funnel = get_tick_funnel()
+        await tick_funnel.start(refresh_endpoints_cache)
+        logger.info("TickFunnel started with adaptive polling")
     except Exception as e:
         logger.error(f"Failed to start background tasks: {e}")
         raise
@@ -70,8 +64,11 @@ async def lifespan(app: FastAPI):
     try:
         await get_discovery_manager().stop()
         logger.info("Discovery manager stopped")
+        
+        await get_tick_funnel().stop()
+        logger.info("TickFunnel stopped")
     except Exception as e:
-        logger.error(f"Error stopping discovery manager: {e}")
+        logger.error(f"Error stopping services: {e}")
 
 
 # Initialize FastAPI app with lifespan handler

@@ -17,6 +17,7 @@
               </span>
               <div class="select is-small">
                 <select v-model="refreshInterval" @change="updateRefreshInterval">
+                  <option :value="1000">1s (adaptive)</option>
                   <option :value="5000">5s</option>
                   <option :value="10000">10s</option>
                   <option :value="15000">15s</option>
@@ -716,7 +717,8 @@ export default {
       litellmStatus: inject('litellmStatus'),
       endpoints: null,
       intervalId: null,
-      refreshInterval: 5000, // Default 5 seconds
+      tickIntervalId: null,
+      refreshInterval: 1000, // Default 1 second (adaptive mode)
       searchQuery: '',
       pullModalActive: false,
       chatModalActive: false,
@@ -768,6 +770,9 @@ export default {
   beforeUnmount() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
+    }
+    if (this.tickIntervalId) {
+      clearInterval(this.tickIntervalId);
     }
     window.removeEventListener('keydown', this.handleKeyboardShortcut);
   },
@@ -831,12 +836,33 @@ export default {
         this.refreshState.loading = false;
       }
     },
+    async sendTick() {
+      try {
+        await this.llmmonitor.axios.post('/llmm/tick');
+      } catch (error) {
+        console.error('Error sending tick:', error);
+      }
+    },
     startRefresh() {
+      // Clear any existing intervals
       if (this.intervalId) {
         clearInterval(this.intervalId);
       }
+      if (this.tickIntervalId) {
+        clearInterval(this.tickIntervalId);
+      }
+
+      // Initial fetch
       this.fetchEndpoints();
-      this.intervalId = setInterval(this.fetchEndpoints, this.refreshInterval);
+
+      if (this.refreshInterval === 1000) {
+        // Adaptive mode: send tick every second, poll cache every 2 seconds
+        this.tickIntervalId = setInterval(this.sendTick, 1000);
+        this.intervalId = setInterval(this.fetchEndpoints, 2000);
+      } else {
+        // Fixed interval mode: just poll cache at selected interval
+        this.intervalId = setInterval(this.fetchEndpoints, this.refreshInterval);
+      }
     },
     updateRefreshInterval() {
       this.startRefresh(); // Restart with new interval
