@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import httpx
+import asyncio
 from typing import List, Dict, Any, Optional
 from llm_monitor import get_discovery_manager
 from llm_monitor.schema import BulkCreateRequest, BulkPurgeRequest
@@ -45,6 +46,12 @@ class ChatRequest(BaseModel):
 
 class DeleteRequest(BaseModel):
     model_name: str
+
+
+class BulkPullRequest(BaseModel):
+    """Request to pull a model on multiple hosts"""
+    model_name: str
+    host_labels: List[str]
 
 
 @router.post("/tick")
@@ -196,6 +203,167 @@ async def pull_model(label: str, request: PullRequest):
             yield json.dumps({"error": str(e)}) + "\n"
     
     return StreamingResponse(stream_pull_progress(), media_type="application/x-ndjson")
+
+
+@router.post("/bulk-pull")
+async def bulk_pull_model(request: BulkPullRequest):
+    """
+    Pull a model on multiple Ollama hosts with progress streaming for each host.
+    
+    Args:
+        request: Bulk pull request containing model_name and host_labels
+    
+    Returns:
+        Streaming response with pull progress for all hosts in NDJSON format
+    """
+    logger.info(f"POST /llmm/bulk-pull called for model: {request.model_name}")
+    logger.info(f"Host labels: {request.host_labels}")
+    
+    # Get discovery manager and plugin service
+    discovery_manager = get_discovery_manager()
+    plugin_service = discovery_manager.get_plugin_service()
+    
+    async def stream_bulk_pull_progress():
+        """Stream progress for all hosts concurrently"""
+        
+        # Filter valid and online hosts before starting
+        valid_labels = []
+        for label in request.host_labels:
+            # Check if host exists
+            if label not in plugin_service.plugins:
+                logger.warning(f"Host '{label}' not found in plugin service, skipping bulk-pull")
+                yield json.dumps({
+                    "host": label,
+                    "skipped": True,
+                    "reason": "Host not found"
+                }) + "\n"
+                continue
+            
+            # Check if host is online by looking up in registry
+            plugin = plugin_service.plugins[label]
+            host_registry = discovery_manager.hosts_registry
+            
+            # Find the host in registry by IP
+            host_found = False
+            for host_ip, host_info in host_registry.items():
+                if host_ip == plugin.ip:
+                    host_found = True
+                    if not host_info.is_online:
+                        logger.warning(f"Host '{label}' ({plugin.ip}) is offline, skipping bulk-pull")
+                        yield json.dumps({
+                            "host": label,
+                            "skipped": True,
+                            "reason": "Host is offline"
+                        }) + "\n"
+                    else:
+                        valid_labels.append(label)
+                    break
+            
+            if not host_found:
+                # Host not in registry (shouldn't happen, but handle gracefully)
+                logger.warning(f"Host '{label}' not found in registry, skipping bulk-pull")
+                yield json.dumps({
+                    "host": label,
+                    "skipped": True,
+                    "reason": "Host not in registry"
+                }) + "\n"
+        
+        # If no valid hosts, exit early
+        if not valid_labels:
+            logger.info("No valid online hosts for bulk-pull")
+            return
+        
+        logger.info(f"Starting bulk-pull for {len(valid_labels)} online host(s)")
+        
+        async def pull_on_host(label: str):
+            """Pull model on a single host and stream progress"""
+            try:
+                plugin = plugin_service.plugins[label]
+                ollama_url = f"http://{plugin.ip}:{plugin.port}/api/pull"
+                
+                logger.info(f"Starting pull on {label}: {ollama_url}")
+                
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream(
+                        "POST",
+                        ollama_url,
+                        json={"name": request.model_name},
+                    ) as response:
+                        if response.status_code != 200:
+                            error_msg = await response.aread()
+                            logger.error(f"Pull failed on {label}: {error_msg}")
+                            yield json.dumps({
+                                "host": label,
+                                "error": error_msg.decode()
+                            }) + "\n"
+                            return
+                        
+                        async for chunk in response.aiter_lines():
+                            if chunk:
+                                # Parse the chunk and add host label
+                                try:
+                                    progress_data = json.loads(chunk)
+                                    progress_data["host"] = label
+                                    yield json.dumps(progress_data) + "\n"
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Invalid JSON from {label}: {chunk}")
+                                    
+            except Exception as e:
+                logger.error(f"Error pulling on {label}: {e}")
+                yield json.dumps({
+                    "host": label,
+                    "error": str(e)
+                }) + "\n"
+        
+        # Create tasks for valid hosts only
+        tasks = []
+        queues = {}
+        
+        # Create a queue for each valid host to collect progress
+        for label in valid_labels:
+            queue = asyncio.Queue()
+            queues[label] = queue
+            
+            async def host_task(lbl, q):
+                async for progress in pull_on_host(lbl):
+                    await q.put(progress)
+                await q.put(None)  # Sentinel to indicate completion
+            
+            tasks.append(asyncio.create_task(host_task(label, queues[label])))
+        
+        # Stream progress from all queues in real-time
+        active_queues = set(queues.keys())
+        
+        while active_queues:
+            # Check all active queues for new data
+            for label in list(active_queues):
+                try:
+                    # Non-blocking get with short timeout
+                    progress = await asyncio.wait_for(
+                        queues[label].get(),
+                        timeout=0.1
+                    )
+                    
+                    if progress is None:
+                        # Host completed
+                        active_queues.remove(label)
+                        logger.info(f"Pull completed on {label}")
+                    else:
+                        # Stream progress
+                        yield progress
+                        
+                except asyncio.TimeoutError:
+                    # No data available from this queue, continue to next
+                    continue
+            
+            # Small delay to prevent tight loop
+            await asyncio.sleep(0.01)
+        
+        # Wait for all tasks to complete
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"Bulk pull completed for all {len(request.host_labels)} host(s)")
+    
+    return StreamingResponse(stream_bulk_pull_progress(), media_type="application/x-ndjson")
 
 
 @router.post("/{label}/chat")

@@ -6,8 +6,9 @@ from typing import Dict
 from loguru import logger
 
 from llm_monitor.schema import DiscoveryConfig, DiscoveredHost
-from llm_monitor.discovery import discover_all_hosts
+from llm_monitor.discovery import discover_all_hosts, is_duplicate_host
 from llm_monitor.plugins import PluginService
+from llm_monitor.env_config import load_ollama_hosts
 
 
 class DiscoveryManager:
@@ -37,6 +38,28 @@ class DiscoveryManager:
         self._queue_consumer_task = None
         
         logger.info(f"DiscoveryManager initialized with {len(config.cidr_ranges)} CIDR range(s)")
+        
+        # Initialize predefined hosts from environment
+        self._initialize_predefined_hosts()
+    
+    def _initialize_predefined_hosts(self) -> None:
+        """
+        Initialize predefined hosts from OLLAMA_HOSTS environment variable.
+        
+        Loads static hosts and adds them to the registry with is_predefined=True.
+        These hosts are never removed from the registry, only marked as online/offline.
+        """
+        predefined_hosts = load_ollama_hosts()
+        
+        if not predefined_hosts:
+            logger.debug("No predefined hosts configured")
+            return
+        
+        for host in predefined_hosts:
+            self.hosts_registry[host.ip] = host
+            logger.info(f"Predefined host added to registry: {host.ip}:{host.port}")
+        
+        logger.info(f"Initialized {len(predefined_hosts)} predefined host(s)")
     
     async def _consume_discovered_hosts(self):
         """
@@ -57,20 +80,24 @@ class DiscoveryManager:
                 
                 # Process discovered host immediately
                 async with self.lock:
-                    if host.ip not in self.hosts_registry:
+                    # Check if this is a duplicate (same IP:port already exists)
+                    if is_duplicate_host(host.ip, host.port, self.hosts_registry):
+                        # Update existing host information
+                        existing = self.hosts_registry[host.ip]
+                        existing.last_seen = host.last_seen
+                        existing.is_online = True
+                        if host.hostname:
+                            existing.hostname = host.hostname
+                        logger.debug(f"Updated existing host: {host.ip}:{host.port}")
+                    else:
+                        # New host - add to registry
                         self.hosts_registry[host.ip] = host
                         logger.info(f"New host immediately available: {host.ip}:{host.port}")
-                    else:
-                        # Update existing host
-                        self.hosts_registry[host.ip].last_seen = host.last_seen
-                        self.hosts_registry[host.ip].is_online = True
-                        self.hosts_registry[host.ip].hostname = host.hostname
-                        logger.debug(f"Updated existing host: {host.ip}")
                     
-                    # Refresh plugins with current online hosts
-                    online_hosts = [h for h in self.hosts_registry.values() if h.is_online]
-                    self.plugin_service.refresh_plugins(online_hosts)
-                    logger.debug(f"Plugins refreshed: {len(online_hosts)} online host(s)")
+                    # Refresh plugins with all hosts (online and offline)
+                    all_hosts = list(self.hosts_registry.values())
+                    self.plugin_service.refresh_plugins(all_hosts)
+                    logger.debug(f"Plugins refreshed: {len(all_hosts)} host(s)")
                 
                 # Mark task as done
                 self.discovery_queue.task_done()
@@ -123,11 +150,12 @@ class DiscoveryManager:
                     logger.info(f"Host marked as offline: {ip}")
             
             # Final plugin refresh after marking offline hosts
-            online_hosts = [h for h in self.hosts_registry.values() if h.is_online]
-            self.plugin_service.refresh_plugins(online_hosts)
+            all_hosts = list(self.hosts_registry.values())
+            online_count = len([h for h in all_hosts if h.is_online])
+            self.plugin_service.refresh_plugins(all_hosts)
             
             logger.info(
-                f"Discovery scan complete: {len(online_hosts)} online, "
+                f"Discovery scan complete: {online_count} online, "
                 f"{len(offline_ips)} offline, {len(self.hosts_registry)} total"
             )
         

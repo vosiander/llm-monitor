@@ -11,6 +11,25 @@ from loguru import logger
 from llm_monitor.schema import DiscoveredHost
 
 
+def is_duplicate_host(ip: str, port: int, existing_hosts: dict[str, DiscoveredHost]) -> bool:
+    """
+    Check if host with same ip:port already exists in registry.
+    
+    Args:
+        ip: IP address to check
+        port: Port to check
+        existing_hosts: Dictionary of existing hosts (keyed by label)
+    
+    Returns:
+        True if duplicate exists, False otherwise
+    """
+    for host in existing_hosts.values():
+        if host.ip == ip and host.port == port:
+            logger.trace(f"Duplicate host found: {ip}:{port}")
+            return True
+    return False
+
+
 async def resolve_hostname(ip: str) -> Optional[str]:
     """
     Resolve IP address to hostname using reverse DNS lookup.

@@ -1,9 +1,10 @@
 """Environment configuration for network discovery and LiteLLM"""
 import os
 import ipaddress
+from datetime import datetime
 from loguru import logger
 from typing import Optional
-from llm_monitor.schema import DiscoveryConfig, LiteLLMConfig
+from llm_monitor.schema import DiscoveryConfig, LiteLLMConfig, DiscoveredHost
 
 
 def parse_cidr_ranges(ranges_str: str) -> list[str]:
@@ -152,3 +153,100 @@ def load_endpoints_refresh_interval() -> int:
     
     logger.info(f"Endpoints refresh interval: {interval} seconds")
     return interval
+
+
+def parse_ollama_hosts(hosts_str: str) -> list[tuple[str, int]]:
+    """
+    Parse comma-separated ip:port pairs and validate them.
+    
+    Args:
+        hosts_str: Comma-separated ip:port pairs (e.g., "192.168.1.10:11434,192.168.1.20:11434")
+    
+    Returns:
+        List of (ip, port) tuples
+    
+    Raises:
+        ValueError: If any host string is invalid
+    """
+    if not hosts_str or not hosts_str.strip():
+        raise ValueError("Ollama hosts string is empty")
+    
+    hosts = [h.strip() for h in hosts_str.split(',') if h.strip()]
+    
+    if not hosts:
+        raise ValueError("No valid Ollama hosts found")
+    
+    validated_hosts = []
+    for host_str in hosts:
+        try:
+            # Parse ip:port format
+            if ':' not in host_str:
+                raise ValueError(f"Host must be in format 'ip:port', got '{host_str}'")
+            
+            parts = host_str.split(':')
+            if len(parts) != 2:
+                raise ValueError(f"Host must have exactly one colon, got '{host_str}'")
+            
+            ip_str, port_str = parts
+            
+            # Validate IP address
+            try:
+                ipaddress.ip_address(ip_str)
+            except ValueError:
+                raise ValueError(f"Invalid IP address: '{ip_str}'")
+            
+            # Validate port
+            try:
+                port = int(port_str)
+                if port < 1 or port > 65535:
+                    raise ValueError(f"Port must be between 1 and 65535, got {port}")
+            except ValueError as e:
+                raise ValueError(f"Invalid port: '{port_str}': {e}")
+            
+            validated_hosts.append((ip_str, port))
+            logger.debug(f"Validated Ollama host: {ip_str}:{port}")
+            
+        except ValueError as e:
+            raise ValueError(f"Invalid Ollama host '{host_str}': {e}")
+    
+    return validated_hosts
+
+
+def load_ollama_hosts() -> list[DiscoveredHost]:
+    """
+    Load predefined Ollama hosts from OLLAMA_HOSTS environment variable.
+    
+    Optional environment variable:
+        OLLAMA_HOSTS: Comma-separated ip:port pairs (e.g., "192.168.1.10:11434,192.168.1.20:11434")
+    
+    Returns:
+        List of DiscoveredHost objects with is_predefined=True, or empty list if not configured
+    """
+    hosts_str = os.getenv('OLLAMA_HOSTS')
+    
+    if not hosts_str:
+        logger.debug("OLLAMA_HOSTS environment variable not set")
+        return []
+    
+    try:
+        host_tuples = parse_ollama_hosts(hosts_str)
+        logger.info(f"Parsed {len(host_tuples)} predefined Ollama host(s)")
+        
+        discovered_hosts = []
+        for ip, port in host_tuples:
+            host = DiscoveredHost(
+                ip=ip,
+                port=port,
+                hostname=None,  # Will be resolved during first check
+                last_seen=datetime.now(),
+                is_online=False,  # Will be checked during initialization
+                is_predefined=True
+            )
+            discovered_hosts.append(host)
+            logger.info(f"Added predefined host: {ip}:{port}")
+        
+        return discovered_hosts
+        
+    except ValueError as e:
+        logger.error(f"Failed to parse OLLAMA_HOSTS: {e}")
+        return []

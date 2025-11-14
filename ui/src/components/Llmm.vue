@@ -48,7 +48,7 @@
           <span class="shortcut-hint">⌘ K</span>
         </div>
       </div>
-      <div v-if="selectedHosts.length > 0 && litellmStatus.available" class="bulk-actions-bar">
+      <div v-if="selectedHosts.length > 0" class="bulk-actions-bar">
         <div class="level">
           <div class="level-left">
             <div class="level-item">
@@ -57,23 +57,25 @@
           </div>
           <div class="level-right">
             <div class="level-item">
-              <button class="button is-success" @click="openLitellmModal">
+              <button class="button is-info" @click="openBulkPullModal" title="Pull Model on Selected Hosts">
+                <span class="icon">
+                  <v-icon name="fa-download" />
+                </span>
+              </button>
+              <button v-if="litellmStatus.available" class="button is-success ml-2" @click="openLitellmModal" title="Create in LiteLLM">
                 <span class="icon">
                   <v-icon name="fa-plus-circle" />
                 </span>
-                <span>Create in LiteLLM</span>
               </button>
-              <button class="button is-danger ml-2" @click="openLitellmPurgeModal">
+              <button v-if="litellmStatus.available" class="button is-danger ml-2" @click="openLitellmPurgeModal" title="Purge from LiteLLM">
                 <span class="icon">
                   <v-icon name="fa-fire" />
                 </span>
-                <span>Purge from LiteLLM</span>
               </button>
-              <button class="button is-light ml-2" @click="selectedHosts = []">
+              <button class="button is-light ml-2" @click="selectedHosts = []" title="Clear Selection">
                 <span class="icon">
                   <v-icon name="fa-times" />
                 </span>
-                <span>Clear Selection</span>
               </button>
             </div>
           </div>
@@ -278,6 +280,78 @@
             Pull Model
           </button>
           <button class="button" @click="closePullModal">Close</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Bulk Pull Modal -->
+    <div v-if="bulkPullModalActive" class="modal is-active">
+      <div class="modal-background" @click="bulkPullModalActive = false"></div>
+      <div class="modal-card">
+        <header class="modal-card-head has-background-info">
+          <p class="modal-card-title has-text-white">Bulk Pull Model</p>
+          <button class="delete" aria-label="close" @click="bulkPullModalActive = false"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="field">
+            <label class="label">Model Name</label>
+            <div class="control">
+              <input
+                class="input"
+                type="text"
+                v-model="bulkPullModelName"
+                placeholder="e.g., gemma2:2b, llama3:8b"
+                :disabled="bulkPullInProgress"
+              >
+            </div>
+            <p class="help">Enter the model name to pull on all selected hosts</p>
+          </div>
+
+          <div class="notification is-info is-light">
+            <p class="mb-2"><strong>Selected Hosts ({{ selectedHosts.length }}):</strong></p>
+            <ul class="ml-4">
+              <li v-for="host in selectedHosts" :key="host">{{ host }}</li>
+            </ul>
+          </div>
+
+          <div v-if="bulkPullInProgress" class="progress-section">
+            <p class="has-text-weight-semibold mb-3">Pull Progress:</p>
+            <div v-for="host in selectedHosts" :key="host" class="host-progress mb-3">
+              <p class="has-text-weight-medium mb-1">{{ host }}</p>
+              <progress 
+                class="progress is-primary" 
+                :value="bulkPullProgress[host] || 0" 
+                max="100"
+              >
+                {{ bulkPullProgress[host] || 0 }}%
+              </progress>
+              <p class="pull-status is-size-7">{{ bulkPullStatus[host] || 'Waiting...' }}</p>
+            </div>
+          </div>
+
+          <div v-if="bulkPullErrors.length > 0" class="notification is-danger">
+            <p class="has-text-weight-semibold mb-2">Errors:</p>
+            <ul>
+              <li v-for="error in bulkPullErrors" :key="error.host">
+                <strong>{{ error.host }}:</strong> {{ error.message }}
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="bulkPullComplete" class="notification is-success">
+            Bulk pull completed! Models pulled on {{ selectedHosts.length }} host(s).
+          </div>
+        </section>
+        <footer class="modal-card-foot">
+          <button
+            class="button is-info"
+            @click="startBulkPull"
+            :disabled="!bulkPullModelName || bulkPullInProgress"
+            :class="{ 'is-loading': bulkPullInProgress }"
+          >
+            Pull on All Hosts
+          </button>
+          <button class="button" @click="closeBulkPullModal">Close</button>
         </footer>
       </div>
     </div>
@@ -757,8 +831,16 @@ export default {
       litellmPurging: false,
       litellmPurgeResults: null,
       activeDropdown: null,
+      bulkPullModalActive: false,
+      bulkPullModelName: '',
+      bulkPullInProgress: false,
+      bulkPullProgress: {},
+      bulkPullStatus: {},
+      bulkPullErrors: [],
+      bulkPullComplete: false,
     };
   },
+
 
   mounted() {
     this.fetchEndpoints();
@@ -1298,6 +1380,112 @@ export default {
     },
     closeDropdown() {
       this.activeDropdown = null;
+    },
+    openBulkPullModal() {
+      this.bulkPullModalActive = true;
+      this.bulkPullModelName = '';
+      this.bulkPullInProgress = false;
+      this.bulkPullProgress = {};
+      this.bulkPullStatus = {};
+      this.bulkPullErrors = [];
+      this.bulkPullComplete = false;
+    },
+    async startBulkPull() {
+      if (!this.bulkPullModelName || this.selectedHosts.length === 0) return;
+
+      this.bulkPullInProgress = true;
+      this.bulkPullProgress = {};
+      this.bulkPullStatus = {};
+      this.bulkPullErrors = [];
+      this.bulkPullComplete = false;
+
+      // Initialize progress for all hosts
+      this.selectedHosts.forEach(host => {
+        this.bulkPullProgress[host] = 0;
+        this.bulkPullStatus[host] = 'Waiting...';
+      });
+
+      try {
+        const response = await fetch(
+          `${this.llmmonitor.axios.defaults.baseURL}/llmm/bulk-pull`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model_name: this.bulkPullModelName,
+              host_labels: this.selectedHosts
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n').filter(line => line.trim());
+
+          for (const line of lines) {
+            try {
+              const data = JSON.parse(line);
+              const host = data.host;
+
+              if (!host) continue;
+
+              if (data.error) {
+                this.bulkPullErrors.push({
+                  host: host,
+                  message: data.error
+                });
+                this.bulkPullStatus[host] = 'Error';
+                continue;
+              }
+
+              if (data.status) {
+                this.bulkPullStatus[host] = data.status;
+              }
+
+              if (data.completed && data.total) {
+                this.bulkPullProgress[host] = Math.round((data.completed / data.total) * 100);
+              }
+
+              // Force reactivity update
+              this.bulkPullProgress = { ...this.bulkPullProgress };
+              this.bulkPullStatus = { ...this.bulkPullStatus };
+            } catch (e) {
+              console.error('Error parsing bulk pull progress:', e, line);
+            }
+          }
+        }
+
+        this.bulkPullComplete = true;
+      } catch (error) {
+        console.error('Error during bulk pull:', error);
+        this.bulkPullErrors.push({
+          host: 'All',
+          message: error.message || 'Failed to initiate bulk pull'
+        });
+      } finally {
+        this.bulkPullInProgress = false;
+      }
+    },
+    closeBulkPullModal() {
+      this.bulkPullModalActive = false;
+      this.bulkPullModelName = '';
+      this.bulkPullInProgress = false;
+      this.bulkPullProgress = {};
+      this.bulkPullStatus = {};
+      this.bulkPullErrors = [];
+      this.bulkPullComplete = false;
+      // Clear selection after closing
+      this.selectedHosts = [];
     },
   },
 };

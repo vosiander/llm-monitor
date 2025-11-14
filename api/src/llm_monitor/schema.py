@@ -37,6 +37,7 @@ class DiscoveredHost(BaseModel):
     hostname: Optional[str] = None
     last_seen: datetime
     is_online: bool = True
+    is_predefined: bool = False
     
     @property
     def url(self) -> str:
